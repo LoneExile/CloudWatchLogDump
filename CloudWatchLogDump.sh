@@ -41,15 +41,6 @@ while [ "$1" != "" ]; do
 		shift
 		FILTER_PATTERN=$1
 		;;
-	# -F | --config-file)
-	# 	shift
-	# 	CONFIG_FILE=$1
-	# 	TARGET=$(echo "$CONFIG_FILE" | cut -d'=' -f2)
-	# 	CONFIG_FILE=$(echo "$CONFIG_FILE" | cut -d'=' -f1)
-	# 	if [ "$TARGET" == "$CONFIG_FILE" ]; then
-	# 		TARGET="default"
-	# 	fi
-	# 	;;
 	-m | --max-iterations)
 		shift
 		MAX_ITERATIONS=$1
@@ -72,8 +63,28 @@ while [ "$1" != "" ]; do
 	-o)
 		OUTPUT_FLAG=true
 		;;
+	--start-date)
+		shift
+		START_DATE=$1
+		;;
+	--start-time)
+		shift
+		START_TIME=$1
+		;;
+	--end-date)
+		shift
+		END_DATE=$1
+		;;
+	--end-time)
+		shift
+		END_TIME=$1
+		;;
 	--show-err)
 		IS_SHOW_ERR=true
+		;;
+	--debug)
+		set -x
+		DEBUG=true
 		;;
 	-h | --help)
 		usage
@@ -85,43 +96,47 @@ while [ "$1" != "" ]; do
 	shift
 done
 
-read_ini() {
-	local section=$1
-	local key=$2
-	local default=$3
-	local awk_script
-	local value
+if [ -n "$START_DATE" ] || [ -n "$START_TIME" ]; then
+	IS_USE_START_TIME=true
+fi
 
-	awk_script="/$section/ {found=1} found && /$key/ {print \$2; exit}"
-	value=$(awk -F '=' "$awk_script" "$CONFIG_FILE" | sed 's/^[ \t]*//;s/[ \t]*$//')
+if [ -n "$END_DATE" ] || [ -n "$END_TIME" ]; then
+	IS_USE_END_TIME=true
+fi
 
-	if [ -z "$value" ] && [ -n "$default" ]; then
-		echo "$default"
-	else
-		echo "$value"
+if [ -z "$START_DATE" ]; then
+	START_DATE=$(date +%Y-%m-%d)
+fi
+
+if [ -z "$START_TIME" ]; then
+	START_TIME="00:00:00"
+fi
+
+if [ -z "$END_DATE" ]; then
+	END_DATE=$START_DATE
+fi
+
+if [ -z "$END_TIME" ]; then
+	END_TIME="23:59:59"
+fi
+
+if [[ "$IS_USE_START_TIME" = true ]] && [[ "$IS_USE_END_TIME" = true ]]; then
+	if [[ "$START_DATE $START_TIME" > "$END_DATE $END_TIME" ]]; then
+		echo "Start date/time must be before end date/time"
+		exit 1
 	fi
-}
+fi
 
-if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
-	PROFILE=$([[ -n "$PROFILE" ]] && echo "$PROFILE" || echo "$(read_ini "$TARGET" PROFILE "$(read_ini default PROFILE)")")
-	LOG_GROUP_NAME=$([[ -n "$LOG_GROUP_NAME" ]] && echo "$LOG_GROUP_NAME" || echo "$(read_ini "$TARGET" LOG_GROUP_NAME "$(read_ini default LOG_GROUP_NAME)")")
-	LOG_STREAM_NAME=$([[ -n "$LOG_STREAM_NAME" ]] && echo "$LOG_STREAM_NAME" || echo "$(read_ini "$TARGET" LOG_STREAM_NAME "$(read_ini default LOG_STREAM_NAME)")")
-	FILTER_PATTERN=$([[ -n "$FILTER_PATTERN" ]] && echo "$FILTER_PATTERN" || echo "$(read_ini "$TARGET" FILTER_PATTERN "$(read_ini default FILTER_PATTERN)")")
-	MAX_ITERATIONS=$([[ -n "$MAX_ITERATIONS" ]] && echo "$MAX_ITERATIONS" || echo "$(read_ini "$TARGET" MAX_ITERATIONS "$(read_ini default MAX_ITERATIONS)")")
-	IS_SHOW_ERR=$([[ -n "$IS_SHOW_ERR" ]] && echo "$IS_SHOW_ERR" || echo "$(read_ini "$TARGET" IS_SHOW_ERR "$(read_ini default IS_SHOW_ERR)")")
-	OUTPUT_FLAG=$([[ -n "$OUTPUT_FLAG" ]] && echo "$OUTPUT_FLAG" || echo "$(read_ini "$TARGET" OUTPUT_FLAG "$(read_ini default OUTPUT_FLAG)")")
-	LIST_LOG_GROUPS=$([[ -n "$LIST_LOG_GROUPS" ]] && echo "$LIST_LOG_GROUPS" || echo "$(read_ini "$TARGET" LIST_LOG_GROUPS "$(read_ini default LIST_LOG_GROUPS)")")
-	HEAD=$([[ -n "$HEAD" ]] && echo "$HEAD" || echo "$(read_ini "$TARGET" HEAD "$(read_ini default HEAD)")")
-	TAIL=$([[ -n "$TAIL" ]] && echo "$TAIL" || echo "$(read_ini "$TARGET" TAIL "$(read_ini default TAIL)")")
+if [[ "$IS_USE_START_TIME" = true ]]; then
+	START_TIME_MS="--start-time $(date -d "$START_DATE $START_TIME" +%s%3N)"
+else
+	START_TIME_MS=""
+fi
 
-	echo "PROFILE = $PROFILE"
-	echo "LOG_GROUP_NAME = $LOG_GROUP_NAME"
-	echo "LOG_STREAM_NAME = $LOG_STREAM_NAME"
-	echo "FILTER_PATTERN = $FILTER_PATTERN"
-	echo "MAX_ITERATIONS = $MAX_ITERATIONS"
-elif [ -n "$CONFIG_FILE" ] && [ ! -f "$CONFIG_FILE" ]; then
-	echo "File '$CONFIG_FILE' does not exist."
-	exit 1
+if [[ "$IS_USE_END_TIME" = true ]]; then
+	END_TIME_MS="--end-time $(date -d "$END_DATE $END_TIME" +%s%3N)"
+else
+	END_TIME_MS=""
 fi
 
 if [ -z "$IS_SHOW_ERR" ]; then
@@ -142,7 +157,8 @@ if [ -z "$MAX_ITERATIONS" ]; then
 fi
 
 if [ -n "$MAX_ITERATIONS" ] && [ "$MAX_ITERATIONS" -eq "$MAX_ITERATIONS" ] 2>/dev/null; then
-	printf "# CloudWatchLogDump\n"
+	# printf "# CloudWatchLogDump\n"
+	echo ""
 else
 	echo "MAX_ITERATIONS must be an integer"
 	exit 1
@@ -155,12 +171,32 @@ fi
 listLogsGroup() {
 	base_cmd="aws logs describe-log-groups --profile \"$PROFILE\""
 	logs=$(eval "$base_cmd" "$SHOW_ERR" | jq -r '.logGroups[] | .logGroupName')
-	echo "$logs"
+
+	readarray -t log_groups <<<"$logs"
+	declare -a numbered_log_groups
+
+	for i in "${!log_groups[@]}"; do
+		numbered_log_groups+=("#$((i + 1)) ${log_groups[$i]}")
+		echo "${numbered_log_groups[$i]}"
+	done
+
 }
 
 if [ "$LIST_LOG_GROUPS" = true ]; then
 	listLogsGroup
 	exit 0
+fi
+
+if [ -n "$DEBUG" ]; then
+	echo "LOG_GROUP_NAME = $LOG_GROUP_NAME"
+	echo "LOG_STREAM_NAME = $LOG_STREAM_NAME"
+	echo "FILTER_PATTERN = $FILTER_PATTERN"
+	echo "MAX_ITERATIONS = $MAX_ITERATIONS"
+	echo "START_DATE = $START_DATE"
+	echo "START_TIME = $START_TIME"
+	echo "END_DATE = $END_DATE"
+	echo "END_TIME = $END_TIME"
+	echo "PROFILE = $PROFILE"
 fi
 
 fetchLogs() {
@@ -174,7 +210,7 @@ fetchLogs() {
 	within_time_ms=$((5 * 60 * 1000))
 
 	fetchLogsStream="aws logs get-log-events --log-group-name \$LOG_GROUP_NAME --log-stream-name \$LOG_STREAM --profile \$PROFILE"
-	base_cmd="$fetchLogsStream --start-from-head $SHOW_ERR"
+	base_cmd="$fetchLogsStream --start-from-head $START_TIME_MS $END_TIME_MS $SHOW_ERR"
 	OUTPUT=$(eval "$base_cmd" | jq)
 	IS_EVENT=$(echo "$OUTPUT" | jq -r '.events[]')
 	FORWARD_TOKEN=$(echo "$OUTPUT" | jq -r '.nextForwardToken')
@@ -183,7 +219,7 @@ fetchLogs() {
 		echo "$OUTPUT" | jq -r '.events[] | .message' | jq '.log' -r
 
 		while true; do
-			base_cmd="$fetchLogsStream --start-from-head --next-token $FORWARD_TOKEN $SHOW_ERR"
+			base_cmd="$fetchLogsStream --start-from-head --next-token $FORWARD_TOKEN $START_TIME_MS $END_TIME_MS $SHOW_ERR"
 			OUTPUT=$(eval "$base_cmd" | jq)
 			IS_EVENT=$(echo "$OUTPUT" | jq -r '.events[]')
 			NEXT_FORWARD_TOKEN=$(echo "$OUTPUT" | jq -r '.nextForwardToken')
@@ -207,6 +243,12 @@ fetchLogs() {
 			if [[ "$IS_EVENT" != "" ]] && [[ "$FORWARD_TOKEN" != "" ]]; then
 				echo "$OUTPUT" | jq -r '.events[] | .message' | jq '.log' -r
 				FORWARD_TOKEN="$NEXT_FORWARD_TOKEN"
+			fi
+
+			if [[ "$IS_EVENT" == "" ]] && [[ "$FORWARD_TOKEN" != "" ]]; then
+				echo "--------------------------------------------------"
+				echo "No more events found for $LOG_STREAM"
+				break
 			fi
 		done
 	else
