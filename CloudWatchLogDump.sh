@@ -49,14 +49,6 @@ while [ "$1" != "" ]; do
 		shift
 		LOG_STREAM_NAME=$1
 		;;
-	--head)
-		shift
-		HEAD=$1
-		;;
-	--tail)
-		shift
-		TAIL=$1
-		;;
 	ls)
 		LIST_LOG_GROUPS=true
 		;;
@@ -81,6 +73,9 @@ while [ "$1" != "" ]; do
 		;;
 	--show-err)
 		IS_SHOW_ERR=true
+		;;
+	--tail)
+		TAIL=true
 		;;
 	--debug)
 		set -x
@@ -149,7 +144,13 @@ if [ -z "$HEAD" ]; then
 fi
 
 if [ -z "$TAIL" ]; then
-	TAIL=0
+	TAIL=false
+fi
+
+if [[ "$TAIL" != true ]]; then
+	HEAD="--start-from-head"
+else
+	HEAD=""
 fi
 
 if [ -z "$MAX_ITERATIONS" ]; then
@@ -210,7 +211,7 @@ fetchLogs() {
 	within_time_ms=$((5 * 60 * 1000))
 
 	fetchLogsStream="aws logs get-log-events --log-group-name \$LOG_GROUP_NAME --log-stream-name \$LOG_STREAM --profile \$PROFILE"
-	base_cmd="$fetchLogsStream --start-from-head $START_TIME_MS $END_TIME_MS $SHOW_ERR"
+	base_cmd="$fetchLogsStream $HEAD $START_TIME_MS $END_TIME_MS $SHOW_ERR"
 	OUTPUT=$(eval "$base_cmd" | jq)
 	IS_EVENT=$(echo "$OUTPUT" | jq -r '.events[]')
 	FORWARD_TOKEN=$(echo "$OUTPUT" | jq -r '.nextForwardToken')
@@ -219,7 +220,7 @@ fetchLogs() {
 		echo "$OUTPUT" | jq -r '.events[] | .message' | jq '.log' -r
 
 		while true; do
-			base_cmd="$fetchLogsStream --start-from-head --next-token $FORWARD_TOKEN $START_TIME_MS $END_TIME_MS $SHOW_ERR"
+			base_cmd="$fetchLogsStream $HEAD --next-token $FORWARD_TOKEN $START_TIME_MS $END_TIME_MS $SHOW_ERR"
 			OUTPUT=$(eval "$base_cmd" | jq)
 			IS_EVENT=$(echo "$OUTPUT" | jq -r '.events[]')
 			NEXT_FORWARD_TOKEN=$(echo "$OUTPUT" | jq -r '.nextForwardToken')
