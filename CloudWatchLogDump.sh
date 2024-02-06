@@ -24,11 +24,14 @@ usage() {
 }
 
 if [ $# -eq 0 ]; then
-	usage
+	INTERACTIVE_MODE=true
 fi
 
 while [ "$1" != "" ]; do
 	case $1 in
+	ls)
+		LIST_LOG_GROUPS=true
+		;;
 	-l | --log-group-name)
 		shift
 		LOG_GROUP_NAME=$1
@@ -48,9 +51,6 @@ while [ "$1" != "" ]; do
 	-s | --log-stream-name)
 		shift
 		LOG_STREAM_NAME=$1
-		;;
-	ls)
-		LIST_LOG_GROUPS=true
 		;;
 	-o)
 		OUTPUT_FLAG=true
@@ -90,6 +90,150 @@ while [ "$1" != "" ]; do
 	esac
 	shift
 done
+
+if [ -z "$IS_SHOW_ERR" ]; then
+	IS_SHOW_ERR=false
+fi
+SHOW_ERR=$([[ "$IS_SHOW_ERR" != true ]] && echo "2>/dev/null" || echo "")
+
+ask_for_profile() {
+	echo "Fetching AWS profiles..."
+	local cmd="aws configure list-profiles $SHOW_ERR"
+	readarray -t profiles < <(eval "$cmd")
+	local profile_count=${#profiles[@]}
+
+	echo "Please select an AWS Profile (press Enter to leave as default):"
+	for i in "${!profiles[@]}"; do
+		echo "$((i + 1))) ${profiles[$i]}"
+	done
+	echo "Press Enter to leave as default."
+
+	while true; do
+		read -r -p "Enter selection (1-${profile_count}): " selection
+		if [[ -z "$selection" ]]; then
+			echo "Leaving AWS Profile as default."
+			PROFILE=""
+			break
+		elif [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "$profile_count" ]; then
+			PROFILE="${profiles[$((selection - 1))]}"
+			echo "You selected '$PROFILE'"
+			break
+		else
+			echo "Invalid selection. Please try again or press Enter to leave as default."
+		fi
+	done
+}
+
+ask_for_log_group() {
+	echo "Fetching log groups..."
+	local cmd="aws logs describe-log-groups --profile \"$PROFILE\" $SHOW_ERR"
+	readarray -t log_groups < <(eval "$cmd" | jq -r '.logGroups[] | .logGroupName')
+
+	echo "Please select a log group:"
+	for i in "${!log_groups[@]}"; do
+		echo "$((i + 1))) ${log_groups[$i]}"
+	done
+
+	while true; do
+		read -r -p "Enter selection (1-${#log_groups[@]}): " selection
+		if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#log_groups[@]}" ]; then
+			LOG_GROUP_NAME="${log_groups[$((selection - 1))]}"
+			echo "You selected '$LOG_GROUP_NAME'"
+			break
+		else
+			echo "Invalid selection. Please try again or press Enter to leave as default."
+		fi
+	done
+}
+
+ask_for_filter_pattern() {
+	echo "Please enter a filter pattern (press Enter to leave as default):"
+	read -r FILTER_PATTERN
+	if [[ -z "$FILTER_PATTERN" ]]; then
+		echo "Leaving filter pattern as default."
+	else
+		echo "You entered '$FILTER_PATTERN'"
+	fi
+}
+
+ask_for_log_steam() {
+	echo "Fetching log streams..."
+	# local cmd="aws logs describe-log-streams --log-group-name \"$LOG_GROUP_NAME\" --profile \"$PROFILE\" $SHOW_ERR"
+	local cmd="aws logs describe-log-streams --log-group-name \"$LOG_GROUP_NAME\" --order-by \"LastEventTime\" --descending --query \"{logStreams:logStreams[?contains(logStreamName, '$FILTER_PATTERN') == \\\`true\\\`].{logStreamName:logStreamName,firstEventTimestamp:firstEventTimestamp,lastEventTimestamp:lastEventTimestamp}, nextToken: nextToken}\" --limit 50 --profile \"$PROFILE\" $SHOW_ERR"
+	readarray -t log_streams < <(eval "$cmd" | jq -r '.logStreams[] | .logStreamName')
+
+	echo "Please select a log stream:"
+	for i in "${!log_streams[@]}"; do
+		echo "$((i + 1))) ${log_streams[$i]}"
+	done
+
+	while true; do
+		read -r -p "Enter selection (1-${#log_streams[@]}): " selection
+		if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#log_streams[@]}" ]; then
+			LOG_STREAM_NAME="${log_streams[$((selection - 1))]}"
+			echo "You selected '$LOG_STREAM_NAME'"
+			break
+		else
+			echo "Invalid selection. Please try again or press Enter to leave as default."
+		fi
+	done
+}
+
+ask_for_start_date() {
+	echo "Please enter a start date (YYYY-MM-DD) (press Enter to leave as default):"
+	read -r START_DATE
+	if [[ -z "$START_DATE" ]]; then
+		echo "Leaving start date as default."
+	else
+		echo "You entered '$START_DATE'"
+	fi
+}
+
+ask_for_start_time() {
+	echo "Please enter a start time (HH:MM:SS) (press Enter to leave as default):"
+	read -r START_TIME
+	if [[ -z "$START_TIME" ]]; then
+		echo "Leaving start time as default."
+	else
+		echo "You entered '$START_TIME'"
+	fi
+}
+
+# confirm_and_set_profile() {
+# 	while true; do
+# 		local profile=$(ask_for_profile)
+# 		read -r -p "You entered '$profile'. Is this correct? (y/n) " yn
+# 		case $yn in
+# 		[Yy]*)
+# 			PROFILE="$profile"
+# 			break
+# 			;;
+# 		[Nn]*) echo "Please re-enter the AWS Profile." ;;
+# 		*) echo "Please answer yes or no." ;;
+# 		esac
+# 	done
+# }
+
+if [[ "$INTERACTIVE_MODE" = true ]]; then
+	if [ -z "$PROFILE" ]; then
+		ask_for_profile
+	fi
+	if [ -z "$LOG_GROUP_NAME" ]; then
+		ask_for_log_group
+	fi
+	if [ -z "$FILTER_PATTERN" ]; then
+		ask_for_filter_pattern
+	fi
+	if [ -z "$LOG_STREAM_NAME" ]; then
+		ask_for_log_steam
+	fi
+	if [ -z "$START_DATE" ]; then
+		ask_for_start_date
+	fi
+	if [ -z "$START_TIME" ]; then
+		ask_for_start_time
+	fi
+fi
 
 if [ -n "$START_DATE" ] || [ -n "$START_TIME" ]; then
 	IS_USE_START_TIME=true
@@ -133,11 +277,6 @@ if [[ "$IS_USE_END_TIME" = true ]]; then
 else
 	END_TIME_MS=""
 fi
-
-if [ -z "$IS_SHOW_ERR" ]; then
-	IS_SHOW_ERR=false
-fi
-SHOW_ERR=$([[ "$IS_SHOW_ERR" != true ]] && echo "2>/dev/null" || echo "")
 
 if [ -z "$HEAD" ]; then
 	HEAD=0
