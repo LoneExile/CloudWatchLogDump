@@ -1,25 +1,49 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
+check_requirements() {
+	command -v aws >/dev/null 2>&1 || {
+		echo >&2 "AWS CLI is required but it's not installed. Aborting."
+		exit 1
+	}
+	command -v jq >/dev/null 2>&1 || {
+		echo >&2 "JQ is required but it's not installed. Aborting."
+		exit 1
+	}
+}
+
+check_requirements
 
 usage() {
-	echo "$0"
-	echo " Script to fetch logs from CloudWatch Logs"
-	echo "------------------------------------------"
-	echo " List logs group:"
-	echo " Usage: $0 ls -p <PROFILE>"
-	echo "------------------------------------------"
-	echo " List logs stream from a log group:"
-	echo " Usage: $0 -l <LOG_GROUP_NAME> -f <FILTER_PATTERN> -m <MAX_ITERATIONS> -p <PROFILE> [-o]"
-	echo "  -l | --log-group-name <LOG_GROUP_NAME>  Log group name to fetch logs from"
-	echo "  -f | --filter-pattern <FILTER_PATTERN>  Filter pattern to use when fetching log streams (default: \"\" )"
-	echo "  -m | --max-iterations <MAX_ITERATIONS>  Maximum number of iterations*50 to fetch log streams (default: 1)"
-	echo "  -p | --profile <PROFILE>                AWS profile to use (default: \"\" )"
-	echo "  -o                                      Option flag to fetch the log output (default: false)"
-	echo "------------------------------------------"
-	echo " Fetch logs from a log stream:"
-	echo " Usage: $0 -l <LOG_GROUP_NAME> -s <LOG_STREAM_NAME> -p <PROFILE>"
-	echo "  -s | --log-stream-name <LOG_STREAM_NAME> Log stream name to fetch logs from"
-	echo "------------------------------------------"
-	echo " -h | --help                              Display this help message"
+	cat <<EOF
+Usage: $0 [OPTIONS] [COMMANDS]
+
+Script to fetch logs from AWS CloudWatch Logs.
+
+COMMANDS:
+  ls                            List log groups.
+  -l, --log-group-name          Specify log group name to fetch logs from.
+  -s, --log-stream-name         Specify log stream name to fetch logs from.
+  -F, --config-file             Use a config file to specify parameters.
+  -h, --help                    Display this help message.
+
+OPTIONS:
+  -p, --profile <PROFILE>       AWS profile to use for commands.
+  -f, --filter-pattern <PATTERN> Filter pattern for fetching log streams.
+  -m, --max-iterations <NUMBER> Max iterations for fetching log streams.
+
+EXAMPLES:
+  List log groups:
+    $0 ls -p <PROFILE>
+
+  List log streams from a log group:
+    $0 -l <LOG_GROUP_NAME> -f <FILTER_PATTERN> -m <MAX_ITERATIONS> -p <PROFILE>
+
+  Fetch logs from a log stream:
+    $0 -l <LOG_GROUP_NAME> -s <LOG_STREAM_NAME> -p <PROFILE>
+
+  Fetch logs from a log stream using a config file:
+    $0 -F <CONFIG_FILE>  # Format: <CONFIG_FILE>=<TARGET>, e.g., config.ini=default
+EOF
 	exit 1
 }
 
@@ -43,6 +67,15 @@ while [ "$1" != "" ]; do
 	-f | --filter-pattern)
 		shift
 		FILTER_PATTERN=$1
+		;;
+	-F | --config-file)
+		shift
+		CONFIG_FILE=$1
+		TARGET=$(echo "$CONFIG_FILE" | cut -d'=' -f2)
+		CONFIG_FILE=$(echo "$CONFIG_FILE" | cut -d'=' -f1)
+		if [ "$TARGET" == "$CONFIG_FILE" ]; then
+			TARGET="default"
+		fi
 		;;
 	-m | --max-iterations)
 		shift
@@ -109,6 +142,7 @@ ask_for_profile() {
 	echo "Press Enter to leave as default."
 
 	while true; do
+		echo ""
 		read -r -p "Enter selection (1-${profile_count}): " selection
 		if [[ -z "$selection" ]]; then
 			echo "Leaving AWS Profile as default."
@@ -129,12 +163,13 @@ ask_for_log_group() {
 	local cmd="aws logs describe-log-groups --profile \"$PROFILE\" $SHOW_ERR"
 	readarray -t log_groups < <(eval "$cmd" | jq -r '.logGroups[] | .logGroupName')
 
-	echo "Please select a log group:"
+	printf "Please select a log group:"
 	for i in "${!log_groups[@]}"; do
 		echo "$((i + 1))) ${log_groups[$i]}"
 	done
 
 	while true; do
+		echo ""
 		read -r -p "Enter selection (1-${#log_groups[@]}): " selection
 		if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#log_groups[@]}" ]; then
 			LOG_GROUP_NAME="${log_groups[$((selection - 1))]}"
@@ -147,7 +182,8 @@ ask_for_log_group() {
 }
 
 ask_for_filter_pattern() {
-	echo "Please enter a filter pattern (press Enter to leave as default):"
+	echo ""
+	printf "Please enter a filter pattern (press Enter to leave as default): "
 	read -r FILTER_PATTERN
 	if [[ -z "$FILTER_PATTERN" ]]; then
 		echo "Leaving filter pattern as default."
@@ -168,6 +204,7 @@ ask_for_log_steam() {
 	done
 
 	while true; do
+		echo ""
 		read -r -p "Enter selection (1-${#log_streams[@]}): " selection
 		if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#log_streams[@]}" ]; then
 			LOG_STREAM_NAME="${log_streams[$((selection - 1))]}"
@@ -180,6 +217,7 @@ ask_for_log_steam() {
 }
 
 ask_for_start_date() {
+	echo ""
 	echo "Please enter a start date (YYYY-MM-DD) (press Enter to leave as default):"
 	read -r START_DATE
 	if [[ -z "$START_DATE" ]]; then
@@ -190,6 +228,7 @@ ask_for_start_date() {
 }
 
 ask_for_start_time() {
+	echo ""
 	echo "Please enter a start time (HH:MM:SS) (press Enter to leave as default):"
 	read -r START_TIME
 	if [[ -z "$START_TIME" ]]; then
@@ -198,21 +237,6 @@ ask_for_start_time() {
 		echo "You entered '$START_TIME'"
 	fi
 }
-
-# confirm_and_set_profile() {
-# 	while true; do
-# 		local profile=$(ask_for_profile)
-# 		read -r -p "You entered '$profile'. Is this correct? (y/n) " yn
-# 		case $yn in
-# 		[Yy]*)
-# 			PROFILE="$profile"
-# 			break
-# 			;;
-# 		[Nn]*) echo "Please re-enter the AWS Profile." ;;
-# 		*) echo "Please answer yes or no." ;;
-# 		esac
-# 	done
-# }
 
 if [[ "$INTERACTIVE_MODE" = true ]]; then
 	if [ -z "$PROFILE" ]; then
@@ -233,6 +257,53 @@ if [[ "$INTERACTIVE_MODE" = true ]]; then
 	if [ -z "$START_TIME" ]; then
 		ask_for_start_time
 	fi
+	echo ""
+	echo "---"
+	echo "PROFILE = $PROFILE"
+	echo "LOG_GROUP_NAME = $LOG_GROUP_NAME"
+	echo "FILTER_PATTERN = $FILTER_PATTERN"
+	echo "LOG_STREAM_NAME = $LOG_STREAM_NAME"
+	echo "START_DATE = $START_DATE"
+	echo "START_TIME = $START_TIME"
+	echo "---"
+fi
+
+read_ini() {
+	local section=$1
+	local key=$2
+	local default=$3
+	local awk_script
+	local value
+
+	awk_script="/$section/ {found=1} found && /$key/ {print \$2; exit}"
+	value=$(awk -F '=' "$awk_script" "$CONFIG_FILE" | sed 's/^[ \t]*//;s/[ \t]*$//')
+
+	if [ -z "$value" ] && [ -n "$default" ]; then
+		echo "$default"
+	else
+		echo "$value"
+	fi
+}
+
+if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+	LIST_LOG_GROUPS=$([[ -n "$LIST_LOG_GROUPS" ]] && echo "$LIST_LOG_GROUPS" || echo "$(read_ini "$TARGET" LIST_LOG_GROUPS "$(read_ini default LIST_LOG_GROUPS)")")
+	LOG_GROUP_NAME=$([[ -n "$LOG_GROUP_NAME" ]] && echo "$LOG_GROUP_NAME" || echo "$(read_ini "$TARGET" LOG_GROUP_NAME "$(read_ini default LOG_GROUP_NAME)")")
+	PROFILE=$([[ -n "$PROFILE" ]] && echo "$PROFILE" || echo "$(read_ini "$TARGET" PROFILE "$(read_ini default PROFILE)")")
+	FILTER_PATTERN=$([[ -n "$FILTER_PATTERN" ]] && echo "$FILTER_PATTERN" || echo "$(read_ini "$TARGET" FILTER_PATTERN "$(read_ini default FILTER_PATTERN)")")
+	MAX_ITERATIONS=$([[ -n "$MAX_ITERATIONS" ]] && echo "$MAX_ITERATIONS" || echo "$(read_ini "$TARGET" MAX_ITERATIONS "$(read_ini default MAX_ITERATIONS)")")
+	LOG_STREAM_NAME=$([[ -n "$LOG_STREAM_NAME" ]] && echo "$LOG_STREAM_NAME" || echo "$(read_ini "$TARGET" LOG_STREAM_NAME "$(read_ini default LOG_STREAM_NAME)")")
+	OUTPUT_FLAG=$([[ -n "$OUTPUT_FLAG" ]] && echo "$OUTPUT_FLAG" || echo "$(read_ini "$TARGET" OUTPUT_FLAG "$(read_ini default OUTPUT_FLAG)")")
+	START_DATE=$([[ -n "$START_DATE" ]] && echo "$START_DATE" || echo "$(read_ini "$TARGET" START_DATE "$(read_ini default START_DATE)")")
+	START_TIME=$([[ -n "$START_TIME" ]] && echo "$START_TIME" || echo "$(read_ini "$TARGET" START_TIME "$(read_ini default START_TIME)")")
+	END_DATE=$([[ -n "$END_DATE" ]] && echo "$END_DATE" || echo "$(read_ini "$TARGET" END_DATE "$(read_ini default END_DATE)")")
+	END_TIME=$([[ -n "$END_TIME" ]] && echo "$END_TIME" || echo "$(read_ini "$TARGET" END_TIME "$(read_ini default END_TIME)")")
+	IS_SHOW_ERR=$([[ -n "$IS_SHOW_ERR" ]] && echo "$IS_SHOW_ERR" || echo "$(read_ini "$TARGET" IS_SHOW_ERR "$(read_ini default IS_SHOW_ERR)")")
+	TAIL=$([[ -n "$TAIL" ]] && echo "$TAIL" || echo "$(read_ini "$TARGET" TAIL "$(read_ini default TAIL)")")
+	DEBUG=$([[ -n "$DEBUG" ]] && echo "$DEBUG" || echo "$(read_ini "$TARGET" DEBUG "$(read_ini default DEBUG)")")
+
+elif [ -n "$CONFIG_FILE" ] && [ ! -f "$CONFIG_FILE" ]; then
+	echo "File '$CONFIG_FILE' does not exist."
+	exit 1
 fi
 
 if [ -n "$START_DATE" ] || [ -n "$START_TIME" ]; then
@@ -319,7 +390,6 @@ listLogsGroup() {
 		numbered_log_groups+=("#$((i + 1)) ${log_groups[$i]}")
 		echo "${numbered_log_groups[$i]}"
 	done
-
 }
 
 if [ "$LIST_LOG_GROUPS" = true ]; then
