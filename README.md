@@ -1,6 +1,6 @@
 # AWS CloudWatch Logs Dump
 
-This repository contains a script for fetching logs from AWS CloudWatch, allowing for easy retrieval of log groups, streams, and specific logs based on various filters and configurations. It supports listing log groups, fetching log streams from a log group, and fetching logs from a specific log stream, either directly or using a configuration file.
+This repository contains a script for fetching logs from AWS CloudWatch.
 
 ## Features
 
@@ -39,11 +39,16 @@ chmod +x CloudWatchLogDump.sh
 
 The script offers multiple functionalities. Here are some common usages:
 
+- Interactive mode:
+
+```bash
+./CloudWatchLogDump.sh
+```
+
 - List all log groups:
 
 ```bash
 ./CloudWatchLogDump.sh ls -p your-profile-name
-
 ```
 
 - Fetch log streams from a log group:
