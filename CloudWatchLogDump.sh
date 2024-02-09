@@ -29,7 +29,7 @@ COMMANDS:
 OPTIONS:
   -p, --profile <PROFILE>       AWS profile to use for commands.
   -f, --filter-pattern <PATTERN> Filter pattern for fetching log streams.
-  -m, --max-iterations <NUMBER> Max iterations for fetching log streams.
+	-m, --max-iterations <NUMBER> Max iterations for fetching log streams ( 1 = 50 log streams).
 
 EXAMPLES:
   List log groups:
@@ -194,7 +194,6 @@ ask_for_filter_pattern() {
 
 ask_for_log_steam() {
 	echo "Fetching log streams..."
-	# local cmd="aws logs describe-log-streams --log-group-name \"$LOG_GROUP_NAME\" --profile \"$PROFILE\" $SHOW_ERR"
 	local cmd="aws logs describe-log-streams --log-group-name \"$LOG_GROUP_NAME\" --order-by \"LastEventTime\" --descending --query \"{logStreams:logStreams[?contains(logStreamName, '$FILTER_PATTERN') == \\\`true\\\`].{logStreamName:logStreamName,firstEventTimestamp:firstEventTimestamp,lastEventTimestamp:lastEventTimestamp}, nextToken: nextToken}\" --limit 50 --profile \"$PROFILE\" $SHOW_ERR"
 	readarray -t log_streams < <(eval "$cmd" | jq -r '.logStreams[] | .logStreamName')
 
