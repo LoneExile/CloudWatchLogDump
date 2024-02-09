@@ -8,7 +8,6 @@ This repository contains a script for fetching logs from AWS CloudWatch.
 - **Fetch Log Streams**: Retrieve log streams from a specified log group with optional filtering.
 - **Fetch Logs**: Get logs from a specified log stream within a log group.
 - **Configurable**: Use command-line options or a configuration file to specify parameters such as the AWS profile, log group, log stream, and filter patterns.
-- **Flexible Logging**: Fetch logs based on a custom filter pattern and control the number of iterations for log fetching.
 - **Interactive Mode**: Use the script interactively to select profiles, log groups, and log streams.
 
 ## Prerequisites
